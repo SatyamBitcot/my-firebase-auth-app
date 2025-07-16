@@ -7,6 +7,7 @@ import {
   deleteUser,
   getAllProjects,
   createProject,
+  getCurrentUser,
   updateProject,
   deleteProject,
   getAllTasks,
@@ -18,6 +19,7 @@ import {
   searchUsers,
   filterUsersByRole,
   logoutUser,
+  getUserProfile, // Add this function to get full user profile
 } from "../utils/firebase-config";
 import "./Dashboard.css";
 
@@ -32,6 +34,8 @@ const Dashboard = () => {
   const [error, setError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedRole, setSelectedRole] = useState("");
+  const [currentUser, setCurrentUser] = useState(null); // Changed from userProfile to currentUser
+  const [userLoading, setUserLoading] = useState(true);
 
   // Form states
   const [projectForm, setProjectForm] = useState({
@@ -48,9 +52,48 @@ const Dashboard = () => {
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [showTaskForm, setShowTaskForm] = useState(false);
 
+  // Load current user information
   useEffect(() => {
-    loadDashboardData();
-  }, []);
+    const loadCurrentUser = async () => {
+      setUserLoading(true);
+      try {
+        const user = getCurrentUser();
+        console.log(user, "uuuuuuuuuuuuuuuuuuuuu");
+        if (user) {
+          // Get full user profile from Firestore
+          const profileResult = await getUserProfile(user.uid);
+          if (profileResult.success) {
+            setCurrentUser({
+              ...profileResult.user,
+              email: user.email,
+              uid: user.uid,
+            });
+          } else {
+            // Fallback to basic Firebase user info
+            setCurrentUser({
+              email: user.email,
+              uid: user.uid,
+              firstName: user.displayName || "User",
+              role: "user",
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Error loading user profile:", err);
+        setError("Failed to load user profile");
+      } finally {
+        setUserLoading(false);
+      }
+    };
+
+    loadCurrentUser();
+  }, []); // Only run once on component mount
+
+  useEffect(() => {
+    if (currentUser) {
+      loadDashboardData();
+    }
+  }, [currentUser]);
 
   const loadDashboardData = async () => {
     setLoading(true);
@@ -68,14 +111,15 @@ const Dashboard = () => {
       if (statsRes.success) setActivities(statsRes?.data?.recentActivity);
       if (usersRes.success) setUsers(usersRes.data);
       if (projectsRes.success) setProjects(projectsRes.data);
+      console.log(projectsRes.data, "projects");
       if (tasksRes.success) setTasks(tasksRes.data);
+      console.log(tasksRes.data, "tasks");
     } catch (err) {
       setError("Failed to load dashboard data");
     } finally {
       setLoading(false);
     }
   };
-  console.log(dashboardStats, "dnjhcbdjhkcbdkbcbk");
 
   const handleUserStatusChange = async (userId, isActive) => {
     const result = await updateUserStatus(userId, isActive);
@@ -163,15 +207,6 @@ const Dashboard = () => {
     }
   };
 
-  const handleSearch = async () => {
-    if (searchTerm.trim()) {
-      const result = await searchUsers(searchTerm);
-      if (result.success) setUsers(result.data);
-    } else {
-      loadDashboardData();
-    }
-  };
-
   const handleRoleFilter = async (role) => {
     setSelectedRole(role);
     if (role) {
@@ -182,18 +217,6 @@ const Dashboard = () => {
     }
   };
 
-  const generateReportHandler = async (reportType) => {
-    const result = await generateReport(reportType, {
-      start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-      end: new Date(),
-    });
-    if (result.success) {
-      console.log("Report generated:", result.data);
-    } else {
-      setError(result.message);
-    }
-  };
-
   const handleLogout = async () => {
     const result = await logoutUser();
     if (result.success) {
@@ -201,6 +224,31 @@ const Dashboard = () => {
       console.log("Logged out successfully");
     } else {
       setError(result.message);
+    }
+  };
+
+  // Helper function to get user initials for avatar
+  const getUserInitials = (firstName, email) => {
+    if (firstName) {
+      return firstName.charAt(0).toUpperCase();
+    }
+    if (email) {
+      return email.charAt(0).toUpperCase();
+    }
+    return "U";
+  };
+
+  // Helper function to get role color
+  const getRoleColor = (role) => {
+    switch (role?.toLowerCase()) {
+      case "admin":
+        return "#dc3545"; // Red
+      case "manager":
+        return "#007bff"; // Blue
+      case "user":
+        return "#28a745"; // Green
+      default:
+        return "#6c757d"; // Gray
     }
   };
 
@@ -300,162 +348,234 @@ const Dashboard = () => {
     </div>
   );
 
-  const renderProjects = () => (
-    <div className="projects-section">
-      <h2>Project Management</h2>
-      <button onClick={() => setShowProjectForm(true)}>
-        Create New Project
-      </button>
+  const renderProjects = () => {
+    const filteredProjects = projects.filter(
+      (project) => project.createdBy === currentUser.uid
+    );
 
-      {showProjectForm && (
-        <form onSubmit={handleCreateProject} className="project-form">
-          <input
-            type="text"
-            placeholder="Project Name"
-            value={projectForm.name}
-            onChange={(e) =>
-              setProjectForm({ ...projectForm, name: e.target.value })
-            }
-            required
-          />
-          <textarea
-            placeholder="Project Description"
-            value={projectForm.description}
-            onChange={(e) =>
-              setProjectForm({ ...projectForm, description: e.target.value })
-            }
-            required
-          />
-          <input
-            type="date"
-            value={projectForm.deadline}
-            onChange={(e) =>
-              setProjectForm({ ...projectForm, deadline: e.target.value })
-            }
-            required
-          />
-          <button type="submit">Create Project</button>
-          <button type="button" onClick={() => setShowProjectForm(false)}>
-            Cancel
-          </button>
-        </form>
-      )}
+    return (
+      <div className="projects-section">
+        <h2>Project Management</h2>
+        <button onClick={() => setShowProjectForm(true)}>
+          Create New Project
+        </button>
 
-      <div className="projects-grid">
-        {projects.map((project) => (
-          <div key={project.id} className="project-card">
-            <h3>Name:-{project.name}</h3>
-            <p>Desc:-{project.description}</p>
-            {/* <p>Status: {project.status}</p>
-            <p>Progress: {project.progress}%</p> */}
-            <button onClick={() => handleDeleteProject(project.id)}>
-              Delete
+        {showProjectForm && (
+          <form onSubmit={handleCreateProject} className="project-form">
+            <input
+              type="text"
+              placeholder="Project Name"
+              value={projectForm.name}
+              onChange={(e) =>
+                setProjectForm({ ...projectForm, name: e.target.value })
+              }
+              required
+            />
+            <textarea
+              placeholder="Project Description"
+              value={projectForm.description}
+              onChange={(e) =>
+                setProjectForm({ ...projectForm, description: e.target.value })
+              }
+              required
+            />
+            <input
+              type="date"
+              value={projectForm.deadline}
+              onChange={(e) =>
+                setProjectForm({ ...projectForm, deadline: e.target.value })
+              }
+              required
+            />
+            <button type="submit">Create Project</button>
+            <button type="button" onClick={() => setShowProjectForm(false)}>
+              Cancel
             </button>
-          </div>
-        ))}
+          </form>
+        )}
+
+        <div className="projects-grid">
+          {filteredProjects.length > 0 ? (
+            filteredProjects.map((project) => (
+              <div key={project.id} className="project-card">
+                <h3>Name: {project.name}</h3>
+                <p>Desc: {project.description}</p>
+                <button onClick={() => handleDeleteProject(project.id)}>
+                  Delete
+                </button>
+              </div>
+            ))
+          ) : (
+            <p>No projects created by you.</p>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
-  const renderTasks = () => (
-    <div className="tasks-section">
-      <h2>Task Management</h2>
-      <button onClick={() => setShowTaskForm(true)}>Create New Task</button>
+  const renderTasks = () => {
+    // Filter tasks to show only those created by the current user
+    const filteredTasks = tasks.filter(
+      (task) => task.createdBy === currentUser.uid
+    );
 
-      {showTaskForm && (
-        <form onSubmit={handleCreateTask} className="task-form">
-          <input
-            type="text"
-            placeholder="Task Title"
-            value={taskForm.title}
-            onChange={(e) =>
-              setTaskForm({ ...taskForm, title: e.target.value })
-            }
-            required
-          />
-          <textarea
-            placeholder="Task Description"
-            value={taskForm.description}
-            onChange={(e) =>
-              setTaskForm({ ...taskForm, description: e.target.value })
-            }
-            required
-          />
-          <select
-            value={taskForm.projectId}
-            onChange={(e) =>
-              setTaskForm({ ...taskForm, projectId: e.target.value })
-            }
-            required
-          >
-            <option value="">Select Project</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={taskForm.priority}
-            onChange={(e) =>
-              setTaskForm({ ...taskForm, priority: e.target.value })
-            }
-          >
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-          <button type="submit">Create Task</button>
-          <button type="button" onClick={() => setShowTaskForm(false)}>
-            Cancel
-          </button>
-        </form>
-      )}
+    return (
+      <div className="tasks-section">
+        <h2>Task Management</h2>
+        <button onClick={() => setShowTaskForm(true)}>Create New Task</button>
 
-      <div className="tasks-list">
-        {tasks.map((task) => (
-          <div key={task.id} className="task-card">
-            <h4>{task.title}</h4>
-            <p>{task.description}</p>
-            <p>Priority: {task.priority}</p>
+        {showTaskForm && (
+          <form onSubmit={handleCreateTask} className="task-form">
+            <input
+              type="text"
+              placeholder="Task Title"
+              value={taskForm.title}
+              onChange={(e) =>
+                setTaskForm({ ...taskForm, title: e.target.value })
+              }
+              required
+            />
+            <textarea
+              placeholder="Task Description"
+              value={taskForm.description}
+              onChange={(e) =>
+                setTaskForm({ ...taskForm, description: e.target.value })
+              }
+              required
+            />
             <select
-              value={task.status}
-              onChange={(e) => handleTaskStatusChange(task.id, e.target.value)}
+              value={taskForm.projectId}
+              onChange={(e) =>
+                setTaskForm({ ...taskForm, projectId: e.target.value })
+              }
+              required
             >
-              <option value="pending">Pending</option>
-              <option value="in_progress">In Progress</option>
-              <option value="completed">Completed</option>
+              <option value="">Select Project</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
             </select>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+            <select
+              value={taskForm.priority}
+              onChange={(e) =>
+                setTaskForm({ ...taskForm, priority: e.target.value })
+              }
+            >
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+            <button type="submit">Create Task</button>
+            <button type="button" onClick={() => setShowTaskForm(false)}>
+              Cancel
+            </button>
+          </form>
+        )}
 
-  const renderActivities = () => (
-    <div className="activities-section">
-      <h2>Activity Log</h2>
-      <div className="activities-list">
-        {activities.map((activity) => (
-          <div key={activity.id} className="activity-item">
-            <p>
-              <strong>{activity.type}:</strong> {activity.description}
-            </p>
-            <p className="activity-time">
-              {activity.timestamp &&
-                new Date(activity.timestamp.seconds * 1000).toLocaleString()}
-            </p>
-          </div>
-        ))}
+        <div className="tasks-list">
+          {filteredTasks.length > 0 ? (
+            filteredTasks.map((task) => (
+              <div key={task.id} className="task-card">
+                <h4>{task.title}</h4>
+                <p>{task.description}</p>
+                <p>Priority: {task.priority}</p>
+                <select
+                  value={task.status}
+                  onChange={(e) =>
+                    handleTaskStatusChange(task.id, e.target.value)
+                  }
+                >
+                  <option value="pending">Pending</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                </select>
+              </div>
+            ))
+          ) : (
+            <p>No tasks created by you.</p>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
+
+  const renderActivities = () => {
+    // Filter activities based on the current user's UID
+    const filteredActivities = activities.filter(
+      (activity) => activity.userId === currentUser.uid
+    );
+
+    return (
+      <div className="activities-section">
+        <h2>Activity Log</h2>
+        <div className="activities-list">
+          {filteredActivities.map((activity) => (
+            <div key={activity.id} className="activity-item">
+              <p>
+                <strong>{activity.type}:</strong> {activity.description}
+              </p>
+              <p className="activity-time">
+                {activity.timestamp &&
+                  new Date(activity.timestamp.seconds * 1000).toLocaleString()}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  if (userLoading) {
+    return (
+      <div className="loading-screen">
+        <div className="loading">Loading user profile...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="dashboard">
       <nav className="dashboard-nav">
-        <h1>Dashboard</h1>
-        <ul>
+        <div className="nav-header">
+          <h1>Dashboard</h1>
+        </div>
+
+        {/* Current User Display */}
+        <div className="current-user-section">
+          {currentUser ? (
+            <div className="user-profile">
+              <div
+                className="user-avatar"
+                style={{ backgroundColor: getRoleColor(currentUser.role) }}
+              >
+                {getUserInitials(currentUser.firstName, currentUser.email)}
+              </div>
+              <div className="user-info">
+                <div className="user-name">
+                  {currentUser.firstName || "User"}
+                </div>
+                <div className="user-email">{currentUser.email}</div>
+                <div
+                  className="user-role"
+                  style={{ color: getRoleColor(currentUser.role) }}
+                >
+                  {currentUser.role?.toUpperCase() || "USER"}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="user-profile">
+              <div className="user-avatar">?</div>
+              <div className="user-info">
+                <div className="user-name">Unknown User</div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <ul className="nav-menu">
           <li>
             <button
               onClick={() => setActiveTab("overview")}
@@ -497,6 +617,7 @@ const Dashboard = () => {
             </button>
           </li>
         </ul>
+
         <div className="logout-section">
           <button onClick={handleLogout} className="logout-btn">
             Logout
